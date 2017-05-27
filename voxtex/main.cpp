@@ -15,30 +15,56 @@ using namespace VTFLib;
 class PackerImage {
 public:
 	PackerImage();
-	
-	vlUInt getWidth() { return width; }
-	vlUInt getHeight() { return height; }
 
-	bool loadPNG(const char* filename);
+	void init(int w, int h);
+	bool loadFile(const char* filename);
+
 	bool copyRegion(PackerImage& source, int x, int y, int w, int h);
 	bool pasteRegion(PackerImage& source, int x, int y, double scale=1);
-	void init(int w, int h);
 
 	bool savePNG(const char* filename);
 	bool writeTextureData(CVTFFile& vtfFile, int miplevel = 0);
+
+	vlUInt getWidth() { return width; }
+	vlUInt getHeight() { return height; }
 private:
 	vector<vlByte> data;
 	vlUInt width = 0;
 	vlUInt height = 0;
 
-	PackerImage(const PackerImage&);
-	PackerImage& operator=(const PackerImage&);
+	PackerImage(const PackerImage&) = delete;
+	PackerImage& operator=(const PackerImage&) = delete;
 };
 
 PackerImage::PackerImage() {}
 
-bool PackerImage::loadPNG(const char* filename) {
-	return !lodepng::decode(data, width, height, filename);
+void PackerImage::init(int w, int h) {
+	data.resize(w*h * 4);
+	for (int i = 0; i < w*h * 4; i++) {
+		data[i] = 0;
+	}
+	width = w;
+	height = h;
+}
+
+bool PackerImage::loadFile(const char* filename) {
+
+	const char* extension = filename + strlen(filename) - 4; // look at this shitcode
+
+	if (strcmp(extension, ".png") == 0) {
+		return !lodepng::decode(data, width, height, filename);
+	}
+	else if (strcmp(extension, ".vtf") == 0) {
+		CVTFFile f;
+		if (!f.Load(filename))
+			return false;
+		
+		init(f.GetWidth(), f.GetHeight());
+		
+		return CVTFFile::ConvertToRGBA8888(f.GetData(0, 0, 0, 0), data.data(), width, height, f.GetFormat());
+	}
+
+	return false;
 }
 
 bool PackerImage::copyRegion(PackerImage& source, int x, int y, int w, int h) {
@@ -93,14 +119,6 @@ bool PackerImage::pasteRegion(PackerImage& source, int x, int y, double scale) {
 	return true;
 }
 
-void PackerImage::init(int w, int h) {
-	data.resize(w*h * 4);
-	for (int i = 0; i < w*h * 4; i++) {
-		data[i] = 0;
-	}
-	width = w;
-	height = h;
-}
 
 bool PackerImage::savePNG(const char* filename) {
 	return !lodepng::encode(filename, data, width, height);
@@ -136,7 +154,7 @@ bool taskSlice(const char* file, const char* outdir, int slice_width, int slice_
 		return false;
 	}
 	
-	if (!img.loadPNG(file)) {
+	if (!img.loadFile(file)) {
 		cout << "[Slice] Failed to load input file." << endl;
 		return false;
 	}
@@ -217,7 +235,7 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 			if (pad) {
 				PackerImage tmp;
 
-				if (!tmp.loadPNG(file.path)) {
+				if (!tmp.loadFile(file.path)) {
 					cout << "[Pack] Failed to load file: " << file.name << endl;
 					return false;
 				}
@@ -240,7 +258,7 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 				images[n].pasteRegion(tmp, iw / 2 + iw, ih / 2 + ih);
 			}
 			else {
-				if (!images[n].loadPNG(file.path)) {
+				if (!images[n].loadFile(file.path)) {
 					cout << "[Pack] Failed to load file: " << file.name << endl;
 					return false;
 				}
