@@ -20,7 +20,7 @@ public:
 	bool loadFile(const char* filename);
 
 	bool copyRegion(PackerImage& source, int x, int y, int w, int h);
-	bool pasteRegion(PackerImage& source, int x, int y, double scale=1);
+	bool pasteRegion(PackerImage& source, int x, int y, int w, int h);
 
 	bool savePNG(const char* filename);
 	bool writeTextureData(CVTFFile& vtfFile, int miplevel = 0);
@@ -88,12 +88,12 @@ bool PackerImage::copyRegion(PackerImage& source, int x, int y, int w, int h) {
 	return true;
 }
 
-bool PackerImage::pasteRegion(PackerImage& source, int x, int y, double scale) {
+bool PackerImage::pasteRegion(PackerImage& source, int x, int y, int w, int h) {
 	PackerImage* real_source = &source;
 
-	if (scale != 1) {
+	if (w != source.width || h != source.height) {
 		real_source = new PackerImage();
-		real_source->init(source.width*scale, source.height*scale);
+		real_source->init(w, h);
 		CVTFFile::Resize(source.data.data(), real_source->data.data(), source.width, source.height, real_source->width, real_source->height);
 	}
 
@@ -198,7 +198,7 @@ int nextPow2(int n) {
 	return n;
 }
 
-bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
+bool taskPack(const char* src_dir,const char* out_file, int resolution, bool simple, bool pad) {
 
 	if (!dirIsValid(src_dir)) {
 		cout << "[Pack] Source directory does not exist!" << endl;
@@ -210,15 +210,13 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 
 	int count = -1;
 
-	int img_size = 0;
-
 	map<int, PackerImage> images;
 
 	while (dir.has_next) {
 		tinydir_file file;
 		tinydir_readfile(&dir, &file);
 
-		if (strcmp(file.extension, "png") == 0) {
+		if (strcmp(file.extension, "png") == 0 || strcmp(file.extension, "vtf") == 0) {
 			int n;
 			stringstream s;
 			s << file.name;
@@ -230,8 +228,6 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 
 			count = max(n, count);
 
-			int iw, ih;
-
 			if (pad) {
 				PackerImage tmp;
 
@@ -240,45 +236,22 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 					return false;
 				}
 
-				iw = tmp.getWidth();
-				ih = tmp.getHeight();
+				images[n].init(resolution*2,resolution*2);
 
-				images[n].init(iw*2,ih*2);
-
-				images[n].pasteRegion(tmp, -iw / 2, -ih / 2);
-				images[n].pasteRegion(tmp, iw / 2, -ih / 2);
-				images[n].pasteRegion(tmp, iw / 2 + iw, -ih / 2);
-
-				images[n].pasteRegion(tmp, -iw / 2, ih / 2);
-				images[n].pasteRegion(tmp, iw / 2, ih / 2);
-				images[n].pasteRegion(tmp, iw / 2 + iw, ih / 2);
-
-				images[n].pasteRegion(tmp, -iw / 2, ih / 2 + ih);
-				images[n].pasteRegion(tmp, iw / 2, ih / 2 + ih);
-				images[n].pasteRegion(tmp, iw / 2 + iw, ih / 2 + ih);
+				images[n].pasteRegion(tmp, 0, 0, resolution, resolution);
+				images[n].pasteRegion(tmp, 0, resolution, resolution, resolution);
+				images[n].pasteRegion(tmp, resolution, 0, resolution, resolution);
+				images[n].pasteRegion(tmp, resolution, resolution, resolution, resolution);
 			}
 			else {
-				if (!images[n].loadFile(file.path)) {
+				/*if (!images[n].loadFile(file.path)) {
 					cout << "[Pack] Failed to load file: " << file.name << endl;
 					return false;
-				}
-
-				iw = images[n].getWidth();
-				ih = images[n].getHeight();
-			}
-
-			if (iw != ih) {
-				cout << "[Pack] Source image not square: " << file.name << " ( " << iw << " x " << ih << " )" << endl;
+				}*/
+				cout << "unpadded atlases not supported sorry" << endl;
 				return false;
-			}
-
-			if (img_size == 0) {
-				img_size = iw;
-				cout << "[Pack] Assuming dimensions will match file: " << file.name << " ( " << iw << " x " << ih << " )" << endl;
-			}
-			else if (img_size!=iw) {
-				cout << "[Pack] Source image dimensions do not match: " << file.name << " ( " << iw << " x " << ih << " )" << endl;
-				return false;
+				//iw = images[n].getWidth();
+				//ih = images[n].getHeight();
 			}
 		}
 
@@ -302,24 +275,24 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 	else {
 		n_w = n_h;
 	}
-
-	if (pad)
-		img_size *= 2;
 	
-	cout << "[Pack] Atlas dimensions are " << n_w << " x " << n_h << " tiles / " << n_w*img_size << " x " << n_h*img_size << " pixels." << endl;
+	if (pad)
+		resolution *= 2;
+
+	cout << "[Pack] Atlas dimensions are " << n_w << " x " << n_h << " tiles / " << n_w*resolution << " x " << n_h*resolution << " pixels." << endl;
 
 	CVTFFile vtf_file;
-	vtf_file.Create(n_w*img_size, n_h*img_size, 1, 1, 1, IMAGE_FORMAT_DXT5, true, !simple);
+	vtf_file.Create(n_w*resolution, n_h*resolution, 1, 1, 1, IMAGE_FORMAT_DXT5, true, !simple);
 	vtf_file.SetFlag(TEXTUREFLAGS_POINTSAMPLE, simple);
 
 	int miplevels = 1;
 
 	if (!simple) // Use the mip count for our individual textures so we get a minimum of 1 pixel per texture.
-		miplevels = CVTFFile::ComputeMipmapCount(img_size,img_size, 1);
+		miplevels = CVTFFile::ComputeMipmapCount(resolution, resolution, 1);
 
 	for (int i = 0; i < miplevels; i++) {
 		double fraction = pow(2, -i);
-		int mip_size = img_size*fraction;
+		int mip_size = resolution*fraction;
 		
 		PackerImage dst;
 		dst.init(n_w*mip_size, n_h*mip_size);
@@ -330,7 +303,7 @@ bool taskPack(const char* src_dir,const char* out_file,bool simple,bool pad) {
 			int index = img_iter->first;
 			int ix = index % n_w;
 			int iy = index / n_w;
-			dst.pasteRegion(img_iter->second, ix*mip_size, iy*mip_size, fraction);
+			dst.pasteRegion(img_iter->second, ix*mip_size, iy*mip_size, mip_size, mip_size);
 			img_iter++;
 		}
 
@@ -368,18 +341,19 @@ int main(int argc, char *argv[]) {
 	bool task_success;
 
 	if (strcmp(argv[1], "pack")==0) {
-		if (argc < 4) {
+		if (argc < 5) {
 			cout << "Invalid arguments for pack. Syntax:" << endl;
-			cout << "voxtex pack source_dir dest_file [-simple]" << endl;
+			cout << "voxtex pack source_dir dest_file resolution" << endl;
 			cout << "\tsource_dir - The directory to load PNG images from." << endl;
 			cout << "\tdest_file - The name of the file to save. It should be a VTF file." << endl;
-			cout << "\t-simple - Make a point-sampled texture and don't generate mipmaps." << endl;
+			cout << "\tresolution - The width/height of each individual texture in the atlas in pixels. Must be a power of 2." << endl;
+			//cout << "\t-simple - Make a point-sampled texture and don't generate mipmaps." << endl;
 			return 1;
-		}
+		} 
 		bool simple = false;
-		bool pad = false;
+		bool pad = true;
 		
-		for (int i = 4; i < argc; i++) {
+		/*for (int i = 4; i < argc; i++) {
 			if (strcmp(argv[i], "-simple") == 0) {
 				simple = true;
 			}
@@ -390,9 +364,16 @@ int main(int argc, char *argv[]) {
 				cout << "Invalid argument: " << argv[i] << endl;
 				return 1;
 			}
-		}
+		}*/
 		
-		return !taskPack(argv[2], argv[3], simple, pad);
+		int res = atoi(argv[4]);
+
+		if (res <= 0 || nextPow2(res) != res) {
+			cout << "Argument resolution must be a power of 2." << endl;
+			return 1;
+		}
+
+		return !taskPack(argv[2], argv[3], res, simple, pad);
 	}
 	else if (strcmp(argv[1], "slice") == 0) {
 		if (argc < 6) {
